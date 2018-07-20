@@ -1,0 +1,13 @@
+
+cache/
+six/
+autobahn/
+chardet/
+mapview/
+plyer/
+requests/
+treq/
+twisted/
+zope/
+urllib3
+txaio/
