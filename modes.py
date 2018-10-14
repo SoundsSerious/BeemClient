@@ -547,6 +547,69 @@ class GradientLighting(Mode):
         pass
 
 
+class DirectLighting(Mode):
+
+    def __init__(self,app,menu,**kwargs):
+        super(DirectLighting,self).__init__(app,menu,**kwargs)
+
+        #Direction
+        self.B_lay = BoxLayout( orientation = 'horizontal', size_hint_y = 0.1)
+        self.B_lab = Label(text = 'Blue', size_hint_x = 0.2)
+        self.B = Slider(min = 0, max = 255, value = 1.0 )
+        self.B.bind(on_touch_up  = self.on_B)
+        self.B_lay.add_widget( self.B_lab)
+        self.B_lay.add_widget( self.B)
+
+        self.R_lay = BoxLayout( orientation = 'horizontal', size_hint_y = 0.1)
+        self.R_lab = Label(text = 'Red', size_hint_x = 0.2)
+        self.R = Slider(min = 0, max = 255, value = 1.0 )
+        self.R.bind(on_touch_up  = self.on_R)
+        self.R_lay.add_widget( self.R_lab)
+        self.R_lay.add_widget( self.R)
+
+        self.G_lay = BoxLayout( orientation = 'horizontal', size_hint_y = 0.1)
+        self.G_lab = Label(text = 'Green', size_hint_x = 0.2)
+        self.G = Slider(min = 0, max = 255, value = 1.0 )
+        self.G.bind(on_touch_up  = self.on_G)
+        self.G_lay.add_widget( self.G_lab)
+        self.G_lay.add_widget( self.G)
+
+        self.W_lay = BoxLayout( orientation = 'horizontal', size_hint_y = 0.1)
+        self.W_lab = Label(text = 'White', size_hint_x = 0.2)
+        self.W = Slider(min = 0, max = 255, value = 1.0 )
+        self.W.bind(on_touch_up  = self.on_W)
+        self.W_lay.add_widget( self.W_lab)
+        self.W_lay.add_widget( self.W)
+
+        self.add_widget(self.B_lay)
+        self.add_widget(self.R_lay)
+        self.add_widget(self.G_lay)
+        self.add_widget(self.W_lay)
+
+    def on_B(self,instance,touch):
+        if touch.grab_current != None:
+            val = int( instance.value )
+            self.app.beem_client.setModeSetting(0,val)
+
+    def on_R(self,instance,touch):
+        if touch.grab_current != None:
+            val = int( instance.value )
+            self.app.beem_client.setModeSetting(1,val)
+
+    def on_G(self,instance,touch):
+        if touch.grab_current != None:
+            val = int( instance.value )
+            self.app.beem_client.setModeSetting(2,val)
+
+    def on_W(self,instance,touch):
+        if touch.grab_current != None:
+            val = int( instance.value )
+            self.app.beem_client.setModeSetting(3,val)
+
+    def update_mode_com(self,*args):
+        pass
+
+
 class ModesMenu( Widget ):
     modes = ListProperty()
     _modes = ListProperty()

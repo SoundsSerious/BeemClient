@@ -21,6 +21,7 @@ from autobahn.twisted.websocket import WebSocketClientProtocol, \
 from binascii import *
 import treq
 import socket
+#import netifaces
 
 """
 BEEMO: TWISTED DEV SERVER
@@ -34,40 +35,24 @@ class MeshLocalization(object):
     By knowing our ip address we can replace the last value with a 1 and get the
     server IP. Boo Fucking Ya.
     '''
-    app = None
-    LOCAL_PORT = 18330
-
-    def __init__(self,app):
-        self.app = app
-
+    
     @property
     def SERVER_IP(self):
-        try: #Hail Marry
-            gateway = '10.1.1.1'
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.settimeout(0.01)
-            s.connect_ex((gateway,80))
-            this_ip = s.getsockname()[0]
-            server_ip = '.'.join(this_ip.split('.')[:3]+['1'])
-        except Exception as e:
-            self.app.log( e )
-            try:
-                import netifaces
-                server_ip = netifaces.gateways()['default'][netifaces.AF_INET][0]
-            except:
-                try:
-                    server_ip = '.'.join(socket.gethostbyname( socket.gethostname() ).split('.')[:3]+['1'])
-                except:
-                    server_ip = '10.{}.{}.1'.format(random.randint(1,255),random.randint(1,255))
-        if not server_ip.startswith('10.'):
-            self.app.log('IP Not Of Mesh {}'.format(server_ip))
+        server_ip = '.'.join(socket.gethostbyname( socket.gethostname() ).split('.')[:3]+['1'])
+        print server_ip
+        #server_ip = netifaces.gateways()['default'][netifaces.AF_INET][0]
+        #gateway = '10.0.0.1'
+        #s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        #s.connect((gateway,0))
+        #this_ip = s.getsockname()[0]
+        #server_ip = '.'.join(this_ip.split('.')[:3]+['1'])
         return server_ip
-
+    LOCAL_PORT = 18330
     @property
-    def HTTP_ID(self):
+    def HTTP_ID(self): 
         return "http://{}:{}".format(self.SERVER_IP, self.LOCAL_PORT)
     @property
-    def WEBSOCK_ID(self):
+    def WEBSOCK_ID(self): 
         return "ws://{}:{}/ws".format(self.SERVER_IP, self.LOCAL_PORT)
 
 
@@ -78,18 +63,35 @@ class BeemProtocol(WebSocketClientProtocol):
         self.factory = factory
 
     def onConnect(self, response):
-        self.app.log("Beem Connected {0}".format(response.peer))
+        self.app.log("COM: CON: {0}".format(response.peer))
         self.factory.resetDelay()
-        self.app.schedule_update()
-        self.factory.addr_success = True
 
-    def onMessage(self, message, isBinary):
-        #Handle Websocket Responses... Reports, Verificaiton Ect
-        if not isBinary:
-            self.app.log('WS: {}'.format(message))
+
+    # def onOpen(self):
+    #     self.app.log("COM: OPN:")
+    #
+    #     def hello():
+    #         self.sendMessage(u"Hello, world!".encode('utf8'))
+    #         self.sendMessage(b"\x00\x01\x03\x04", isBinary=True)
+    #         self.factory.reactor.callLater(1, hello)
+    #
+    #     # start sending messages every second ..
+    #     hello()
+
+    # def onMessage(self, payload, isBinary):
+    #     if payload:
+    #         if isBinary:
+    #             #print("Binary message received: {0} bytes".format(len(payload)))
+    #             self.app.log("COM: BIN: {0} ".format(b2a_uu(payload)))
+    #         else:
+    #             if "TEL"in payload and "POS" in payload and payload.endswith(";"):
+    #                 pre, pos_data = payload.split("POS:\t")
+    #                 self.app.log("KALMAN POSITION: {}".format(pos_data))
+    #                 self.app.kalman_pos = sqrt(sum([float(v.replace(';', ''))**2 for v in pos_data.split(',')]))
+    #             self.app.log("COM: TXT: {}".format(payload))
 
     def onClose(self, wasClean, code, reason):
-        self.app.log("Connection Closed {0}".format(reason))
+        self.app.log("COM: CLO: {0}".format(reason))
 
     @property
     def app(self):
@@ -103,9 +105,6 @@ class BeemoClient(WebSocketClientFactory, ReconnectingClientFactory):
     app = None
     client = None #Single Client For Now .. one primary connection
     mesh_loc = None
-    addr_success = False
-    _http_addr = None
-    attm_connector = None
     def __init__(self, kivy_app,mesh_loc,**kwargs):
         self.mesh_loc = mesh_loc
         WebSocketClientFactory.__init__(self,self.mesh_loc.WEBSOCK_ID,**kwargs)
@@ -114,19 +113,9 @@ class BeemoClient(WebSocketClientFactory, ReconnectingClientFactory):
         self.utf8validateIncoming = False
         # reactor.callLater(5,self.getHeapSize)
         # reactor.callLater(5,self.sendTelemetry)
-    @property
-    def http_addr(self):
-        if self.attm_connector:
-            ipadr =  "http://{}:{}".format(self.attm_connector.host, self.attm_connector.port)
-            #self.app.log('Using {}'.format(ipadr))
-            return ipadr
-        else:
-            return self.mesh_loc.HTTP_ID
 
     def startedConnecting(self, connector):
         self.app.log('Started to connect. {}'.format( self.mesh_loc.WEBSOCK_ID))
-        self.attm_connector = connector
-        self._http_addr = connector.getDestination()
 
     def buildProtocol(self, addr):
         self.client = self.protocol(self)
@@ -135,49 +124,29 @@ class BeemoClient(WebSocketClientFactory, ReconnectingClientFactory):
     def clientConnectionFailed(self, connector, reason):
         self.app.log("Client connection failed .. {}".format(reason))
         self.client = None
-        self.addr_success = False
-        self.attm_connector = None
-        ReconnectingClientFactory.clientConnectionFailed(self,connector,reason)
+        self.retry(connector)
 
 
     def clientConnectionLost(self, connector, reason):
         self.app.log("Client connection lost .. {}".format(reason))
         self.client = None
-        self.addr_success = False
-        self.attm_connector = None
-        ReconnectingClientFactory.clientConnectionLost(self,connector,reason)
+        self.retry(connector)
         #self.getHeapSize()
-
-    def retry_connection(self,*args):
-        if self.connector:
-            self.resetDelay()
-            self.retry()
-
-    @inlineCallbacks
-    def getMeshReport(self,*args):
-        if self.client and self.client.connected:
-            try:
-                resp = yield treq.get(self.http_addr+'/mesh/report')
-                #yield resp.text()
-            except  Exception, e:
-                print str(e)
 
     @inlineCallbacks
     def getSettings(self,*args):
         if self.client and self.client.connected:
             try:
-                resp = yield treq.get(self.http_addr+'/lights/settings/get')
+                resp = yield treq.get(self.mesh_loc.HTTP_ID+'/lights/settings/get')
                 content = yield resp.text()
                 yield self.app.applySettings( content )
             except  Exception, e:
                 print str(e)
 
-
-
     @inlineCallbacks
     def setSettings(self,power,temp,brightness):
         if self.client and self.client.connected:
-            yield treq.get(self.http_addr+'/lights/settings/set',   params = {  'temp': str(temp),
+            yield treq.get(self.mesh_loc.HTTP_ID+'/lights/settings/set',   params = {  'temp': str(temp),
                                                                     'power': str(power),
                                                                     'brightness': str(brightness)
                                                                     })
@@ -185,7 +154,7 @@ class BeemoClient(WebSocketClientFactory, ReconnectingClientFactory):
     @inlineCallbacks
     def setColor(self,I=0,H=10,S=0,V=70):
         if self.client and self.client.connected:
-            yield treq.get(self.http_addr+'/mode/color/set',   params = {  'I': str(I),
+            yield treq.get(self.mesh_loc.HTTP_ID+'/mode/color/set',   params = {  'I': str(I),
                                                                     'H': str(H),
                                                                     'S': str(S),
                                                                     'V': str(V)})
@@ -194,7 +163,7 @@ class BeemoClient(WebSocketClientFactory, ReconnectingClientFactory):
     def setMode(self,INDEX):
         if self.client and self.client.connected:
             try:
-                yield treq.get(self.http_addr+'/mode/select/', params={'INDEX': str(INDEX)})
+                yield treq.get(self.mesh_loc.HTTP_ID+'/mode/select/', params={'INDEX': str(INDEX)})
             except  Exception, e:
                 print str(e)
 
@@ -203,7 +172,7 @@ class BeemoClient(WebSocketClientFactory, ReconnectingClientFactory):
         print "Setting Palette "+ str(index)
         if self.client and self.client.connected:
             try:
-                yield treq.get(self.http_addr+'/mode/palette/set', params={'I': str(index)})
+                yield treq.get(self.mesh_loc.HTTP_ID+'/mode/palette/set', params={'I': str(index)})
             except  Exception, e:
                 print str(e)
 
@@ -212,7 +181,7 @@ class BeemoClient(WebSocketClientFactory, ReconnectingClientFactory):
         print 'Mode Setting ' + str(index) + ' To ' + str(value)
         if self.client and self.client.connected:
             try:
-                yield treq.get(self.http_addr+'/mode/settings/set', params={'INX': str(index),
+                yield treq.get(self.mesh_loc.HTTP_ID+'/mode/settings/set', params={'INX': str(index),
                                                                      'SET': str(int(value))})
             except  Exception, e:
                 print str(e)
@@ -221,7 +190,7 @@ class BeemoClient(WebSocketClientFactory, ReconnectingClientFactory):
     def turnOn(self):
         if self.client and self.client.connected:
             try:
-                yield treq.get(self.http_addr+'/lights/on', params = {})
+                yield treq.get(self.mesh_loc.HTTP_ID+'/lights/on', params = {})
             except  Exception, e:
                 print str(e)
 
@@ -229,7 +198,7 @@ class BeemoClient(WebSocketClientFactory, ReconnectingClientFactory):
     def turnOff(self):
         if self.client and self.client.connected:
             try:
-                yield treq.get(self.http_addr+'/lights/off', params = {})
+                yield treq.get(self.mesh_loc.HTTP_ID+'/lights/off', params = {})
             except  Exception, e:
                 print str(e)
 
@@ -245,6 +214,7 @@ if __name__ == '__main__':
         def log(self,*args):
             print 'LOG :'+ str(args[0])
 
+    meshLocalizatoin = MeshLocalization()
 
     app = MockApp()
 
@@ -253,12 +223,8 @@ if __name__ == '__main__':
 
     log.startLogging(sys.stdout)
 
-    meshLocalizatoin = MeshLocalization(app)
     factory = BeemoClient(app,meshLocalizatoin)
     factory.utf8validateIncoming = False
-
-    lc = task.LoopingCall( factory.getMeshReport )
-    lc.start(30.0)
 
     reactor.connectTCP(meshLocalizatoin.SERVER_IP, meshLocalizatoin.LOCAL_PORT, factory)
     reactor.run()

@@ -1,9 +1,18 @@
+import os
+try:
+    user_paths = os.environ['PYTHONPATH'].split(os.pathsep)
+except KeyError:
+    user_paths = []
+
+print 'PYTHON PATH {}'.format( user_paths)
+
 from kivy.support import install_twisted_reactor
 install_twisted_reactor()
 
 from zope.interface import implements, implementer, Interface
 
 from twisted.internet import reactor
+from twisted.internet import task
 from twisted.protocols import basic
 from twisted.cred import credentials
 from twisted.internet.protocol import Protocol, ReconnectingClientFactory
@@ -124,11 +133,19 @@ class SettingsWidget(MenuBar):
          #self.sensors.start(1000.0,0)
          #self.addMenuScreenWidget('Data',self.sensors,**self.app.settings.but_opt)
 
+         #Add Button
+         self.connect_button = Button(text = 'Connect', on_press = self.connect_to_server,size_hint=(1,0.1))
+         self.add_widget(self.connect_button)
+
+
      def build_config(self, config):
          config.setdefaults('section1', {
              'key1': 'value1',
              'key2': '42'
          })
+
+     def connect_to_server(self,*args):
+         self.app.beem_client.retry_connection()
 
      def log(self, text):
          '''Call Back From BEEM'''
@@ -228,16 +245,18 @@ class FrisbeemApp(SocialApp):
     lat = NumericProperty()
     lon = NumericProperty()
 
+    beem_client = ObjectProperty(None)
     socialWidget = ObjectProperty(None)
+
+    _mesh_locilization = None
 
     def auth_handler(self, *args):
         if self.authenticated == False:
             self.loginScreenManager.current = 'login'
         else:
-            self.socialWidget = FrisbeemHomeWidget(self)
-            self.appScreen.add_widget(self.socialWidget)
             self.loginScreenManager.current = 'app'
-            reactor.callLater(1,self.startUpdate)
+            #reactor.callLater(1,self.startUpdate)
+
 
     def setupMainScreen(self):
         self.loginScreenManager = ScreenManager(transition=FadeTransition())
@@ -256,7 +275,9 @@ class FrisbeemApp(SocialApp):
         self.bind(social_client = self.on_social_client)
         #Kickoff
         self.auth_handler()
+
         self.socialWidget = FrisbeemHomeWidget(self)
+        self.appScreen.add_widget(self.socialWidget)
 
         return self.loginScreenManager
 
@@ -269,15 +290,26 @@ class FrisbeemApp(SocialApp):
         deffered.addCallback(self.get_local_projects)
         deffered.addCallback(self.get_projects)
 
+    def schedule_update(self,*args):
+        '''Gets Called After Connection To Beem'''
+        Clock.schedule_once(self.get_beem_config_settings,2.5)
+
+        self._mesh_reporter = task.LoopingCall( self.beem_client.getMeshReport )
+        self._mesh_reporter.start(10.0)
+
     def log(self, text):
         '''Call Back From BEEM'''
         #We add text to BufferLog
+        pre = 'LOG: {}'
         if self.socialWidget:
             self.socialWidget.settings.log( text )
+        else:
+            pre = 'NO LOG: {}'
+        print pre.format(text)
 
     def connectToServer(self):
         #Call back cus argument
-        self.setupNetworkServices()
+        reactor.connectTCP(self._mesh_locilization.SERVER_IP, self._mesh_locilization.LOCAL_PORT, self.beem_client)
 
     def build_config(self, config):
         config.setdefaults('light', {'power': 1,'temp': 5500,'brightness':50} )
@@ -318,110 +350,22 @@ class FrisbeemApp(SocialApp):
 
     def applySettings(self,settingsText):
         settings = json.loads( settingsText )
-        self.config.set('lights', 'brightness', int(100 * settings['brightness']))
-        self.config.set('lights', 'temp', settings['temp'])
-        self.config.set('lights', 'power',  settings['power'])
+        self.config.set('light', 'brightness', int(100 * settings['brightness']))
+        self.config.set('light', 'temp', settings['temp'])
+        self.config.set('light', 'power',  settings['power'])
 
     def setupNetworkServices(self):
         self.log( "starting rectors capin\'")
-        self.beem_client = BeemoClient( self, WEBSOCK_ID )
+
+        self._mesh_locilization = MeshLocalization(self)
+
+        self.beem_client = BeemoClient( self, self._mesh_locilization)
         self.beem_client.utf8validateIncoming = False
-        reactor.connectTCP(LOCAL_IP, LOCAL_PORT, self.beem_client)
-        Clock.schedule_once(self.get_beem_config_settings,2.5)
+        #reactor.connectTCP(self._mesh_locilization.SERVER_IP, self._mesh_locilization.LOCAL_PORT, self.beem_client)
         #self.log('Starting MDNS Name Service')
         #d = broadcast(reactor, "_beem._tcp", PORT+1, "beemo_dev")
         #d.addCallback(broadcasting)
         #d.addErrback(failed)
-
-    def get_user_info(self, user_id=None):
-        '''load user info, defaults to self, if self will update user_dict info'''
-        print Window.size
-        if user_id:
-            uid = user_id
-        elif self.user_id:
-            uid = self.user_id
-        else:
-            uid = None
-
-        if self.social_client and self.authenticated and uid:
-            d = self.social_client.perspective.callRemote('get_user_info', uid)
-            d.addCallback(self._cb_jsonToDict)
-            if self.user_id and uid == self.user_id:
-                d.addCallback( self._cb_assignUserInfo )
-            return d
-        else:
-            return None
-
-    def get_local_users(self, *args):
-        '''Yeild Users From Server'''
-        print 'get local users from {}'.format(self.user_id)
-        if self.social_client and self.authenticated:
-            d = self.social_client.perspective.callRemote('nearby_users',100)
-            return d.addCallback(self._cb_assignLocalUsers)
-        else: #Shooting Blanks
-            return []
-
-    def get_local_projects(self, *args):
-        '''Yeild Users From Server'''
-        print 'get local users from {}'.format(self.user_id)
-        if self.social_client and self.authenticated:
-            d = self.social_client.perspective.callRemote('nearby_projects',100)
-            return d.addCallback(self._cb_assignLocalProjects)
-        else: #Shooting Blanks
-            return []
-
-    def get_friends(self, *args):
-        '''Yeild Users From Server'''
-        print 'get friends from {}'.format(self.user_id)
-        if self.social_client and self.authenticated:
-            d = self.social_client.perspective.callRemote('friend_ids')
-            return d.addCallback(self._cb_assignFriends)
-        else: #Shooting Blanks
-            return []
-
-    def get_projects(self, *args):
-        '''Yeild Users From Server'''
-        print 'get friends from {}'.format(self.user_id)
-        if self.social_client and self.authenticated:
-            d = self.social_client.perspective.callRemote('project_ids')
-            return d.addCallback(self._cb_assignProjects)
-        else: #Shooting Blanks
-            return []
-
-    def _cb_assignUserInfo(self,user_dict):
-        print 'assigning user info {}'.format(user_dict)
-        if user_dict:
-            self.user_object = user_dict
-            return self.user_object
-
-    def _cb_assignLocalUsers(self,localUsersResponse):
-        print 'assigning local users {}'.format( localUsersResponse )
-        if localUsersResponse:
-            self.local_users = localUsersResponse
-            return self.local_users
-        return []
-
-    def _cb_assignLocalProjects(self,localProjectResponse):
-        print 'assigning local projects {}'.format( localProjectResponse )
-        if localProjectResponse:
-            self.local_projects = localProjectResponse
-            return self.local_projects
-        return []
-
-    def _cb_assignFriends(self,friendsList):
-        print 'assigning friends {}'.format( friendsList )
-        if friendsList:
-            self.friends = friendsList
-            return self.friends
-        return []
-
-    def _cb_assignProjects(self,projectList):
-        print 'assigning friends {}'.format( projectList )
-        if projectList:
-            self.projects = projectList
-            return self.friends
-        return []
-
 
 
 

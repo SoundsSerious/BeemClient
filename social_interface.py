@@ -22,6 +22,7 @@ from recycleview import RecycleView
 from kivy.lang import Builder
 from kivy.properties import *
 from datetime import datetime
+from kivy.clock import Clock
 
 from kivy.app import *
 from kivy.uix.screenmanager import *
@@ -170,9 +171,9 @@ class SocialApp(App):
 
 
     def build(self):
-        print 'Attempting Connection'
-        self.connectToServer()
+        self.setupNetworkServices()
         sm = self.setupMainScreen()
+        self.connectToServer()
         return sm
 
     def on_start(self):
@@ -203,9 +204,9 @@ class SocialApp(App):
 
     def on_social_client(self,instance, value):
         print 'updating social client'
-        #reactor.callLater(1,self.startUpdate)
+        Clock.schedule_once(self.startUpdate,1)
 
-    def startUpdate(self):
+    def startUpdate(self,*args):
         d = defer.maybeDeferred(self.get_user_id)
         self.update_client( deffered = d )
 
@@ -230,6 +231,95 @@ class SocialApp(App):
         if userId or userId == 0:
             self.user_id = userId
             return userId
+        
+    def get_user_info(self, user_id=None):
+        '''load user info, defaults to self, if self will update user_dict info'''
+        if user_id:
+            uid = user_id
+        elif self.user_id:
+            uid = self.user_id
+        else:
+            uid = None
+
+        if self.social_client and self.authenticated and uid:
+            d = self.social_client.perspective.callRemote('get_user_info', uid)
+            d.addCallback(self._cb_jsonToDict)
+            if self.user_id and uid == self.user_id:
+                d.addCallback( self._cb_assignUserInfo )
+            return d
+        else:
+            return None
+
+    def get_local_users(self, *args):
+        '''Yeild Users From Server'''
+        print 'get local users from {}'.format(self.user_id)
+        if self.social_client and self.authenticated:
+            d = self.social_client.perspective.callRemote('nearby_users',100)
+            return d.addCallback(self._cb_assignLocalUsers)
+        else: #Shooting Blanks
+            return []
+
+    def get_local_projects(self, *args):
+        '''Yeild Users From Server'''
+        print 'get local users from {}'.format(self.user_id)
+        if self.social_client and self.authenticated:
+            d = self.social_client.perspective.callRemote('nearby_projects',100)
+            return d.addCallback(self._cb_assignLocalProjects)
+        else: #Shooting Blanks
+            return []
+
+    def get_friends(self, *args):
+        '''Yeild Users From Server'''
+        print 'get friends from {}'.format(self.user_id)
+        if self.social_client and self.authenticated:
+            d = self.social_client.perspective.callRemote('friend_ids')
+            return d.addCallback(self._cb_assignFriends)
+        else: #Shooting Blanks
+            return []
+
+    def get_projects(self, *args):
+        '''Yeild Users From Server'''
+        print 'get friends from {}'.format(self.user_id)
+        if self.social_client and self.authenticated:
+            d = self.social_client.perspective.callRemote('project_ids')
+            return d.addCallback(self._cb_assignProjects)
+        else: #Shooting Blanks
+            return []
+
+    def _cb_assignUserInfo(self,user_dict):
+        print 'assigning user info {}'.format(user_dict)
+        if user_dict:
+            self.user_object = user_dict
+            return self.user_object
+
+    def _cb_assignLocalUsers(self,localUsersResponse):
+        print 'assigning local users {}'.format( localUsersResponse )
+        if localUsersResponse:
+            self.local_users = localUsersResponse
+            return self.local_users
+        return []
+
+    def _cb_assignLocalProjects(self,localProjectResponse):
+        print 'assigning local projects {}'.format( localProjectResponse )
+        if localProjectResponse:
+            self.local_projects = localProjectResponse
+            return self.local_projects
+        return []
+
+    def _cb_assignFriends(self,friendsList):
+        print 'assigning friends {}'.format( friendsList )
+        if friendsList:
+            self.friends = friendsList
+            return self.friends
+        return []
+
+    def _cb_assignProjects(self,projectList):
+        print 'assigning friends {}'.format( projectList )
+        if projectList:
+            self.projects = projectList
+            return self.friends
+        return []
+        
 
 class ReconnectingPBClientFactory(PBClientFactory,
                                  protocol.ReconnectingClientFactory):
